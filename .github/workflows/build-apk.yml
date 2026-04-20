@@ -18,6 +18,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install TTS plugin
+        run: npm install @capacitor-community/text-to-speech
+
       - name: Remove android folder
         run: rm -rf android
 
@@ -26,6 +29,14 @@ jobs:
 
       - name: Sync Capacitor
         run: npx cap sync android
+
+      - name: Copy custom icons
+        run: |
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp icons/mipmap-$density/ic_launcher.png android/app/src/main/res/mipmap-$density/ic_launcher.png
+            cp icons/mipmap-$density/ic_launcher.png android/app/src/main/res/mipmap-$density/ic_launcher_round.png
+            cp icons/mipmap-$density/ic_launcher_foreground.png android/app/src/main/res/mipmap-$density/ic_launcher_foreground.png
+          done
 
       - uses: actions/setup-java@v4
         with:
