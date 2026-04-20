@@ -1,4 +1,10 @@
-name: Build APK
+[7:14 p. m., 20/4/2026] Adrian: Run npx cap add android
+[warn] The bundledWebRuntime configuration option has been deprecated. Can be safely deleted.
+Error:  android platform already exists.
+        To re-add this platform, first remove ./android, then run this command again.
+        WARNING: Your native project will be completely removed.
+Error: Process completed with exit code 1.
+[7:16 p. m., 20/4/2026] Adrian: name: Build APK
 
 on:
   push:
@@ -21,7 +27,10 @@ jobs:
       - name: Install Node dependencies
         run: npm install
 
-      - name: Add Android platform
+      - name: Remove existing android folder
+        run: rm -rf android
+
+      - name: Add Android platform fresh
         run: npx cap add android
 
       - name: Sync Capacitor
@@ -40,17 +49,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
-
-      - name: Copy icons to Android
-        run: |
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            cp android/app/src/main/res/mipmap-$density/ic_launcher.png /tmp/ic_$density.png
-          done
-          npx cap sync android
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            cp /tmp/ic_$density.png android/app/src/main/res/mipmap-$density/ic_launcher.png
-            cp /tmp/ic_$density.png android/app/src/main/res/mipmap-$density/ic_launcher_round.png
-          done
 
       - name: Build Debug APK
         run: |
