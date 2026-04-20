@@ -21,6 +21,9 @@ jobs:
       - name: Install Node dependencies
         run: npm install
 
+      - name: Add Android platform
+        run: npx cap add android
+
       - name: Sync Capacitor
         run: npx cap sync android
 
@@ -37,6 +40,17 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
+
+      - name: Copy icons to Android
+        run: |
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp android/app/src/main/res/mipmap-$density/ic_launcher.png /tmp/ic_$density.png
+          done
+          npx cap sync android
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp /tmp/ic_$density.png android/app/src/main/res/mipmap-$density/ic_launcher.png
+            cp /tmp/ic_$density.png android/app/src/main/res/mipmap-$density/ic_launcher_round.png
+          done
 
       - name: Build Debug APK
         run: |
