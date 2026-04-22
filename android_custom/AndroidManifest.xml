@@ -1,53 +1,95 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+package com.lecturapura.app;
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+import android.os.Bundle;
+import android.speech.tts.TextToSpeech;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebView;
+import com.getcapacitor.BridgeActivity;
+import java.util.HashMap;
+import java.util.Locale;
 
-    <!-- Requerido para TTS en Android 11+ (API 30+) -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.TTS_SERVICE" />
-        </intent>
-    </queries>
+public class MainActivity extends BridgeActivity {
 
-    <application
-        android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="@string/app_name"
-        android:supportsRtl="true"
-        android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="true">
+    private TextToSpeech tts;
+    private boolean ttsReady = false;
 
-        <activity
-            android:name=".MainActivity"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
-            android:exported="true"
-            android:hardwareAccelerated="true"
-            android:label="@string/title_activity_main"
-            android:launchMode="singleTask"
-            android:screenOrientation="portrait"
-            android:theme="@style/AppTheme.NoActionBarLaunch"
-            android:windowSoftInputMode="adjustResize">
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
 
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+        tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
+            @Override
+            public void onInit(int status) {
+                if (status == TextToSpeech.SUCCESS) {
+                    tts.setLanguage(new Locale("es", "ES"));
+                    ttsReady = true;
+                    // Notificar al JS que TTS está listo
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            getBridge().getWebView().evaluateJavascript(
+                                "if(window.onNativeTTSReady) window.onNativeTTSReady();",
+                                null
+                            );
+                        }
+                    });
+                }
+            }
+        });
 
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
-    </application>
-</manifest>
+        getBridge().getWebView().addJavascriptInterface(new TTSBridge(), "AndroidTTS");
+    }
+
+    @Override
+    public void onDestroy() {
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
+        super.onDestroy();
+    }
+
+    private class TTSBridge {
+
+        @JavascriptInterface
+        public void speak(String text, float rate, float pitch) {
+            if (!ttsReady || tts == null) return;
+            tts.setSpeechRate(rate);
+            tts.setPitch(pitch);
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "lp_utt");
+        }
+
+        @JavascriptInterface
+        public void stop() {
+            if (tts != null) tts.stop();
+        }
+
+        @JavascriptInterface
+        public boolean isReady() {
+            return ttsReady;
+        }
+
+        @JavascriptInterface
+        public void setLanguage(String lang) {
+            if (!ttsReady || tts == null) return;
+            try {
+                String[] parts = lang.split("[-_]");
+                Locale locale = parts.length >= 2
+                    ? new Locale(parts[0], parts[1])
+                    : new Locale(parts[0]);
+                int result = tts.setLanguage(locale);
+                if (result == TextToSpeech.LANG_MISSING_DATA ||
+                    result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts.setLanguage(new Locale("es", "ES"));
+                }
+            } catch (Exception e) {
+                tts.setLanguage(new Locale("es", "ES"));
+            }
+        }
+
+        @JavascriptInterface
+        public void notifyEnd() {
+            // callback desde TTS nativo al JS
+        }
+    }
+}
