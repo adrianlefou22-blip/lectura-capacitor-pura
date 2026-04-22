@@ -2,12 +2,21 @@
   "appId": "com.lecturapura.app",
   "appName": "Lectura Pura",
   "webDir": "www",
-  "bundledWebRuntime": false,
   "android": {
     "backgroundColor": "#f5f0e8",
     "allowMixedContent": false,
     "captureInput": true,
-    "webContentsDebuggingEnabled": false
+    "webContentsDebuggingEnabled": false,
+    "minWebViewVersion": "60"
+  },
+  "server": {
+    "allowNavigation": [
+      "cdn.jsdelivr.net",
+      "tessdata.projectnaptha.com",
+      "fonts.googleapis.com",
+      "fonts.gstatic.com",
+      "cdnjs.cloudflare.com"
+    ]
   },
   "plugins": {
     "SplashScreen": {
