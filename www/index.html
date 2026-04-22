@@ -80,7 +80,7 @@ body{font-family:var(--fb);background:var(--bg);color:var(--tx);min-height:100vh
 .bcard small{color:var(--tx2);font-size:.7rem}
 .pbar{height:2px;background:var(--bor);border-radius:2px;margin-top:8px}
 .pfill{height:100%;background:var(--gold);border-radius:2px;transition:width .3s}
-.bdel{position:absolute;top:9px;right:9px;background:none;border:none;color:var(--tx2);font-size:.72rem;cursor:pointer;opacity:0;transition:opacity .2s}
+.bdel{position:absolute;top:9px;right:9px;background:none;border:none;color:var(--tx2);font-size:.85rem;cursor:pointer;opacity:.5;transition:opacity .2s}
 .bcard:hover .bdel{opacity:1}
 .bdel:hover{color:#c0392b}
 .add-btn{width:100%;border:2px dashed var(--bor);background:transparent;color:var(--tx2);padding:14px;border-radius:var(--r);cursor:pointer;font-family:var(--fb);font-size:.86rem;transition:all .2s;margin-top:2px}
@@ -220,6 +220,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         <div id="ch-header">
           <div id="ch-title"></div>
           <small id="ch-info"></small>
+          <button id="btn-export" onclick="exportarTXT()" style="display:none;margin-top:8px;background:none;border:1px solid var(--gold);color:var(--gold);padding:5px 14px;border-radius:20px;font-family:var(--fb);font-size:.75rem;cursor:pointer">⬇ Guardar como TXT</button>
         </div>
         <div id="pcon"></div>
       </div>
@@ -250,6 +251,133 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 
 <script>
 // ══════════════════════════════════════════════════════
+//  PUENTE TTS NATIVO ANDROID
+//  Usa AndroidTTS (Java) inyectado por MainActivity.
+//  Emula window.speechSynthesis para que toda la app
+//  funcione sin cambios.
+// ══════════════════════════════════════════════════════
+(function() {
+  // Si ya existe speechSynthesis nativo, no hacer nada
+  if ('speechSynthesis' in window) return;
+
+  function instalarPuenteTTS() {
+    if (!window.AndroidTTS) return false;
+
+    var _speaking = false;
+    var _queue = [];
+    var _onvoiceschanged = null;
+    var _currentUtt = null;
+
+    // El TTS nativo no tiene callback onend directo desde Java
+    // Usamos duración estimada para disparar onend
+    function estimarDuracion(texto, rate) {
+      // ~13 caracteres por segundo a velocidad 1.0
+      var chars = texto.length;
+      var segundos = (chars / 13) / rate;
+      return Math.max(500, segundos * 1000);
+    }
+
+    function runNext() {
+      if (!_queue.length) { _speaking = false; return; }
+      var utt = _queue.shift();
+      _speaking = true;
+      _currentUtt = utt;
+
+      var lang = (utt.voice && utt.voice.lang) ? utt.voice.lang
+               : (utt.lang || 'es-ES');
+      var rate  = utt.rate  !== undefined ? parseFloat(utt.rate)  : 1.0;
+      var pitch = utt.pitch !== undefined ? parseFloat(utt.pitch) : 1.0;
+
+      try {
+        window.AndroidTTS.setLanguage(lang);
+        window.AndroidTTS.speak(utt.text || '', rate, pitch);
+      } catch(e) { console.warn('AndroidTTS.speak error:', e); }
+
+      if (utt.onstart) setTimeout(function() {
+        if (utt.onstart) utt.onstart({ type: 'start' });
+      }, 50);
+
+      // Disparar onend estimado
+      var dur = estimarDuracion(utt.text || '', rate);
+      setTimeout(function() {
+        if (_currentUtt !== utt) return; // fue cancelado
+        _speaking = false;
+        _currentUtt = null;
+        if (utt.onend) utt.onend({ type: 'end' });
+        runNext();
+      }, dur);
+    }
+
+    // Crear voces sintéticas en español
+    var _voices = [
+      { name: 'Android español', lang: 'es-ES', localService: true,
+        default: true, voiceURI: 'es-ES' },
+      { name: 'Android español MX', lang: 'es-MX', localService: true,
+        default: false, voiceURI: 'es-MX' }
+    ];
+
+    window.SpeechSynthesisUtterance = function(text) {
+      this.text  = text || '';
+      this.lang  = 'es-ES';
+      this.rate  = 1.0;
+      this.pitch = 1.0;
+      this.volume = 1.0;
+      this.voice = null;
+      this.voiceURI = '';
+      this.onstart = null;
+      this.onend   = null;
+      this.onerror = null;
+    };
+
+    window.speechSynthesis = {
+      get speaking() { return _speaking; },
+      get pending()  { return _queue.length > 0; },
+      paused: false,
+      speak: function(utt) {
+        _queue.push(utt);
+        if (!_speaking) runNext();
+      },
+      cancel: function() {
+        _queue = [];
+        _speaking = false;
+        _currentUtt = null;
+        try { window.AndroidTTS.stop(); } catch(e) {}
+      },
+      pause:    function() {},
+      resume:   function() {},
+      getVoices: function() { return _voices; }
+    };
+
+    Object.defineProperty(window.speechSynthesis, 'onvoiceschanged', {
+      configurable: true,
+      set: function(fn) {
+        _onvoiceschanged = fn;
+        // Disparar inmediatamente ya que las voces están listas
+        setTimeout(fn, 100);
+      },
+      get: function() { return _onvoiceschanged; }
+    });
+
+    console.log('Puente TTS Android instalado OK');
+    return true;
+  }
+
+  // Intentar instalar ahora o cuando Capacitor/Activity esté lista
+  if (!instalarPuenteTTS()) {
+    window.onNativeTTSReady = function() {
+      instalarPuenteTTS();
+    };
+    // Reintentar cada 200ms hasta 3 segundos
+    var intentos = 0;
+    var timer = setInterval(function() {
+      intentos++;
+      if (instalarPuenteTTS() || intentos > 15) clearInterval(timer);
+    }, 200);
+  }
+})();
+</script>
+<script>
+// ══════════════════════════════════════════════════════
 //  PDF.JS
 // ══════════════════════════════════════════════════════
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -275,19 +403,22 @@ var tamFuente = 1.1;    // tamaño fuente en rem
 //  ARRANQUE — el toque desbloquea el audio en mobile
 // ══════════════════════════════════════════════════════
 function arrancar() {
-  if (!('speechSynthesis' in window)) {
-    document.getElementById('welcome').innerHTML =
-      '<h2 style="color:var(--gold);font-family:var(--fd);margin-bottom:16px">Sin soporte de voz</h2>' +
-      '<p style="color:var(--tx2);max-width:280px">Usá Chrome o Brave en Android.</p>';
-    return;
-  }
   // Desbloquear audio dentro del gesto táctil (obligatorio en mobile)
   try {
-    UTTERANCE = new SpeechSynthesisUtterance(' ');
-    UTTERANCE.volume = 0;
-    window.speechSynthesis.speak(UTTERANCE);
-    setTimeout(function(){ window.speechSynthesis.cancel(); UTTERANCE = null; }, 300);
+    if ('speechSynthesis' in window) {
+      UTTERANCE = new SpeechSynthesisUtterance(' ');
+      UTTERANCE.volume = 0;
+      window.speechSynthesis.speak(UTTERANCE);
+      setTimeout(function(){ window.speechSynthesis.cancel(); UTTERANCE = null; }, 300);
+    }
   } catch(e) { UTTERANCE = null; }
+
+  // Crear audio de fondo aquí, tras gesto del usuario
+  if (!bgAudioEl) {
+    bgAudioEl = new Audio(SILENT_WAV);
+    bgAudioEl.loop = true;
+    bgAudioEl.volume = 0.001;
+  }
 
   document.getElementById('welcome').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
@@ -354,8 +485,7 @@ function cambiarFuente(dir) {
 function initVoces() {
   if (!rellenarVoces()) {
     window.speechSynthesis.onvoiceschanged = rellenarVoces;
-    setTimeout(rellenarVoces, 800);
-    setTimeout(rellenarVoces, 2500);
+    setTimeout(rellenarVoces, 1000);
   }
 }
 
@@ -445,36 +575,29 @@ function togTab(tab) {
 // ══════════════════════════════════════════════════════
 //  STORAGE — biblioteca (solo metadatos, no texto completo)
 // ══════════════════════════════════════════════════════
-function cargarBib() {
-  try { var r = localStorage.getItem('lp6'); if (r) bib = JSON.parse(r); } catch(e) { bib = []; }
-}
+// cargarBib consolidada abajo
 function guardar() {
-  // Guardamos SOLO los metadatos, no el texto del párrafo (demasiado grande)
-  // El texto se guarda en sessionStorage por sesión
   try {
-    var meta = bib.map(function(libro) {
-      return {
-        titulo: libro.titulo,
-        numCaps: libro.caps.length,
-        numPars: libro.caps.reduce(function(s,c){ return s+c.pars.length; }, 0),
-        uc: libro.uc, up: libro.up
-      };
+    // Guardar sin ocrTexto (puede ser enorme) — se regenera con OCR si hace falta
+    var bibSinOCR = bib.map(function(libro) {
+      var copia = Object.assign({}, libro);
+      delete copia.ocrTexto;
+      return copia;
     });
-    localStorage.setItem('lp6-meta', JSON.stringify(meta));
-    // Guardar texto en sessionStorage (limpia al cerrar)
-    sessionStorage.setItem('lp6', JSON.stringify(bib));
-  } catch(e) {
-    // Si falla por espacio, limpiar libros viejos
-    try { sessionStorage.setItem('lp6', JSON.stringify(bib)); } catch(e2) {}
-  }
-  // También intentar localStorage para persistir
-  try { localStorage.setItem('lp6', JSON.stringify(bib)); } catch(e) {}
+    var json = JSON.stringify(bibSinOCR);
+    try {
+      localStorage.setItem('lp6', json);
+    } catch(e) {
+      // Cuota excedida — guardar solo los 3 libros más recientes
+      try {
+        localStorage.setItem('lp6', JSON.stringify(bibSinOCR.slice(0, 3)));
+      } catch(e2) {}
+    }
+  } catch(e) {}
 }
 function cargarBib() {
   try {
-    // Intentar localStorage primero
     var r = localStorage.getItem('lp6');
-    if (!r) r = sessionStorage.getItem('lp6');
     if (r) bib = JSON.parse(r);
   } catch(e) { bib = []; }
 }
@@ -569,7 +692,17 @@ async function procesarArchivo(file) {
       return;
     }
 
+    // Si OCR ya insertó el libro en tiempo real, no duplicar
+    if (window._ocrYaInsertado) {
+      window._ocrYaInsertado = false;
+      window._ultimoOCR = null;
+      return;
+    }
     var libro = buildLibro(titulo, txt);
+    if (window._ultimoOCR) {
+      libro.ocrTexto = window._ultimoOCR;
+      window._ultimoOCR = null;
+    }
     bib.unshift(libro);
     guardar(); renderBib(); hideLoad(); abrirLibro(0);
   } catch(err) {
@@ -588,6 +721,7 @@ async function leerPDF(file) {
   var txt = '';
   var paginasConTexto = 0;
 
+  // Primera pasada: extraer texto nativo
   for (var i = 1; i <= pdf.numPages; i++) {
     showLoad('PDF: página ' + i + ' de ' + pdf.numPages + '...');
     var pg = await pdf.getPage(i);
@@ -597,16 +731,203 @@ async function leerPDF(file) {
     txt += pagTxt + '\n\n';
   }
 
-  // Detectar PDF escaneado: si menos del 20% de páginas tienen texto
-  if (paginasConTexto < pdf.numPages * 0.2 && pdf.numPages > 2) {
+  // PDF con texto nativo — devolver directamente
+  if (paginasConTexto >= pdf.numPages * 0.2 || pdf.numPages <= 2) {
+    return txt;
+  }
+
+  // PDF escaneado — intentar OCR con Scribe.js
+  showLoad('PDF escaneado detectado. Iniciando OCR...');
+  return await leerPDFconOCR(file, pdf);
+}
+
+// ══════════════════════════════════════════════════════
+//  OCR PARA PDFs ESCANEADOS — usa Tesseract.js
+//  Funciona offline en WebView de Android (no usa Workers externos).
+//  Renderiza cada página con PDF.js → canvas → OCR en español.
+// ══════════════════════════════════════════════════════
+var tesseractWorker = null;
+
+function liberarTesseract() {
+  if (tesseractWorker) {
+    try { tesseractWorker.terminate(); } catch(e) {}
+    tesseractWorker = null;
+  }
+}
+
+async function getTesseractWorker() {
+  if (tesseractWorker) return tesseractWorker;
+  showLoad('Cargando motor OCR...');
+  // Cargar Tesseract.js desde CDN
+  await new Promise(function(resolve, reject) {
+    if (window.Tesseract) { resolve(); return; }
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  showLoad('Inicializando OCR en español...');
+  tesseractWorker = await Tesseract.createWorker('spa', 1, {
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js',
+    logger: function(m) {
+      if (m.status === 'recognizing text') {
+        var pct = Math.round((m.progress || 0) * 100);
+        showLoad('OCR en progreso: ' + pct + '%');
+      }
+    }
+  });
+  return tesseractWorker;
+}
+
+async function leerPDFconOCR(file, pdfDoc) {
+  showLoad('PDF escaneado — iniciando OCR...');
+
+  var worker;
+  try {
+    worker = await getTesseractWorker();
+  } catch(e) {
+    throw new Error('No se pudo iniciar el OCR. Verificá tu conexión a internet.');
+  }
+
+  var numPages = pdfDoc.numPages;
+  var tituloOCR = file.name.replace(/\.[^.]+$/, '');
+  var claveProgreso = 'ocr-prog-' + tituloOCR.slice(0, 30);
+
+  // Recuperar progreso anterior si existe
+  var progGuardado = 0;
+  var textoGuardado = '';
+  try {
+    var pg = JSON.parse(sessionStorage.getItem(claveProgreso) || 'null');
+    if (pg && pg.pagina && pg.pagina < numPages) {
+      progGuardado = pg.pagina;
+      textoGuardado = pg.texto || '';
+      showLoad('Retomando OCR desde página ' + (progGuardado + 1) + '...');
+      await new Promise(function(r) { setTimeout(r, 800); });
+    }
+  } catch(e) {}
+
+  var textoTotal = textoGuardado;
+
+  // Crear libro provisional para mostrar texto mientras avanza
+  var libroProvisional = null;
+  var idxProvisional = -1;
+
+  function actualizarLibroEnTiempoReal() {
+    if (!textoTotal.trim()) return;
+    var libro = buildLibro(tituloOCR, textoTotal);
+    libro.ocrEnCurso = true;
+    libro.ocrTexto = textoTotal;
+
+    if (idxProvisional === -1) {
+      // Primera vez — agregar a biblioteca
+      bib.unshift(libro);
+      idxProvisional = 0;
+      guardar();
+      renderBib();
+      abrirLibro(0);
+      hideLoad();
+      showLoad('OCR en curso — podés leer mientras continúa...');
+    } else {
+      // Actualizar el libro existente con más texto
+      var caps = libro.caps;
+      bib[idxProvisional].caps = caps;
+      bib[idxProvisional].ocrTexto = textoTotal;
+      guardar();
+      // Si el libro está abierto, refrescar capítulos sin perder posición
+      if (libIdx === idxProvisional) {
+        renderIdx();
+        // Solo refrescar capítulo actual si ganó párrafos nuevos
+        var capActual = bib[idxProvisional].caps[capI];
+        if (capActual) {
+          document.getElementById('ch-info').textContent =
+            'Cap. ' + (capI+1) + ' de ' + caps.length + '  ·  ' + capActual.pars.length + ' párrafos';
+        }
+      }
+      renderBib();
+    }
+  }
+
+  for (var i = progGuardado; i < numPages; i++) {
+    showLoad('OCR: página ' + (i+1) + ' de ' + numPages +
+      (idxProvisional >= 0 ? ' — podés leer mientras trabaja' : '...'));
+
+    try {
+      var page = await pdfDoc.getPage(i + 1);
+      var viewport = page.getViewport({ scale: 2.0 });
+      var canvas = document.createElement('canvas');
+      canvas.width  = viewport.width;
+      canvas.height = viewport.height;
+      var ctx = canvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+      var result = await worker.recognize(canvas);
+      var texto = result.data.text || '';
+      if (texto.trim().length > 5) {
+        textoTotal += texto + '\n\n';
+      }
+
+      canvas.width = 0;
+      canvas.height = 0;
+
+    } catch(e) {
+      console.warn('OCR falló en página ' + (i+1) + ':', e.message);
+    }
+
+    // Guardar progreso cada 5 páginas
+    if ((i + 1) % 5 === 0) {
+      try {
+        sessionStorage.setItem(claveProgreso, JSON.stringify({
+          pagina: i + 1,
+          texto: textoTotal
+        }));
+      } catch(e) {}
+    }
+
+    // Mostrar texto cada 10 páginas
+    if ((i + 1) % 10 === 0 || i === numPages - 1) {
+      actualizarLibroEnTiempoReal();
+    }
+
+    // Tick al event loop cada 2 páginas
+    if (i % 2 === 0) {
+      await new Promise(function(r) { setTimeout(r, 0); });
+    }
+  }
+
+  if (!textoTotal || textoTotal.trim().length < 50) {
     throw new Error(
-      'Este PDF parece ser un escaneado (imágenes).\n' +
-      'Solo ' + paginasConTexto + ' de ' + pdf.numPages + ' páginas tienen texto extraíble.\n\n' +
-      'Para leer PDFs escaneados necesitás convertirlos a texto primero con una app de OCR.'
+      'El OCR no pudo extraer texto de este PDF.\n' +
+      'El documento puede tener muy baja calidad o estar rotado.'
     );
   }
 
-  return txt;
+  // OCR completo — limpiar progreso guardado
+  try { sessionStorage.removeItem(claveProgreso); } catch(e) {}
+
+  // Marcar libro como completo
+  if (idxProvisional >= 0) {
+    bib[idxProvisional].ocrEnCurso = false;
+    bib[idxProvisional].ocrTexto = textoTotal;
+    guardar();
+    renderBib();
+    hideLoad();
+    setSt('✅ OCR completo — ' + numPages + ' páginas extraídas');
+  }
+
+  // Liberar worker
+  liberarTesseract();
+  window._ultimoOCR = textoTotal;
+
+  // Si ya insertamos el libro en tiempo real, no retornar texto
+  // (procesarArchivo lo detecta con _ocrYaInsertado)
+  if (idxProvisional >= 0) {
+    window._ocrYaInsertado = true;
+    return textoTotal;
+  }
+  return textoTotal;
 }
 
 // ══════════════════════════════════════════════════════
@@ -791,6 +1112,9 @@ function abrirLibro(i) {
   document.getElementById('tb-title').textContent = libro.titulo;
   document.getElementById('ctrl').style.display = 'flex';
   renderIdx(); showCap(); renderBib();
+  // Mostrar botón exportar si tiene texto OCR guardado
+  var btnExp = document.getElementById('btn-export');
+  if (btnExp) btnExp.style.display = 'inline-block';
   if (window.innerWidth <= 600) {
     sideOpen = false;
     document.getElementById('sidebar').classList.add('col');
@@ -1009,9 +1333,7 @@ function parPrev() {
 // ══════════════════════════════════════════════════════
 function togPlay() {
   if (playing) { detener(); return; }
-  if (!('speechSynthesis' in window)) {
-    alert('Sin soporte de voz. Usá Chrome o Brave.'); return;
-  }
+  // speechSynthesis disponible via puente nativo o browser
   playing = true;
   document.getElementById('bp').textContent = '⏸';
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
@@ -1135,12 +1457,14 @@ function hablar() {
     try {
       // Watchdog empieza AQUÍ, justo cuando se llama speak()
       clearTimeout(WATCHDOG);
+      // Watchdog dinámico: tiempo según longitud del texto + margen
+      var wdMs = Math.max(8000, (textoTTS.length / baseRate) * 120);
       WATCHDOG = setTimeout(function() {
         if (!playing) return;
         console.warn('Watchdog — reintentando');
         UTTERANCE = null;
         hablar();
-      }, 20000);
+      }, wdMs);
       window.speechSynthesis.speak(UTTERANCE);
     } catch(err) {
       setSt('Error de voz: ' + err.message);
@@ -1155,6 +1479,33 @@ function hablar() {
   }
   // Actualizar panel de pantalla de bloqueo con el capítulo actual
   if ('mediaSession' in navigator) actualizarMediaSession();
+}
+
+// ══════════════════════════════════════════════════════
+//  EXPORTAR TXT
+// ══════════════════════════════════════════════════════
+function exportarTXT() {
+  if (libIdx === null) return;
+  var libro = bib[libIdx];
+  var texto = libro.ocrTexto;
+  if (!texto) {
+    // Reconstruir desde párrafos si no hay OCR guardado
+    texto = libro.caps.map(function(cap) {
+      return cap.titulo + '\n\n' + cap.pars.join('\n\n');
+    }).join('\n\n─────────────────\n\n');
+  }
+  var blob = new Blob([texto], { type: 'text/plain;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = (libro.titulo || 'libro') + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 1000);
+  setSt('TXT descargado: ' + a.download);
 }
 
 // ══════════════════════════════════════════════════════
@@ -1190,10 +1541,8 @@ var heartbeatTimer = null;
 
 // WAV de 1 segundo de silencio real en base64
 var SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-// Crear bgAudioEl al cargar — listo antes del primer play
-var bgAudioEl = new Audio(SILENT_WAV);
-bgAudioEl.loop = true;
-bgAudioEl.volume = 0.001;
+// bgAudioEl se crea en arrancar() tras gesto del usuario
+var bgAudioEl = null;
 
 function actualizarMediaSession(titulo) {
   if (!('mediaSession' in navigator)) return;
